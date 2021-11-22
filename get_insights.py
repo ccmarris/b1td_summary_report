@@ -181,9 +181,9 @@ class b1reporting(bloxone.b1):
     Call base __init__ and extend
     '''
     super().__init__(cfg_file)
-    self.ti_reports = '/api/ti-reports/' + self.cfg['api_version']
-    self.aggr_reports  = self.ti_reports + '/activity/aggregations'
-    self.insights = self.aggr_reports + '/insight'
+    self.ti_reports_url = self.base_url + '/api/ti-reports/' + self.cfg['api_version']
+    self.aggr_reports_url  = self.ti_reports_url + '/activity/aggregations'
+    self.insights_url = self.aggr_reports_url + '/insight'
 
     return
 
@@ -220,29 +220,32 @@ class b1reporting(bloxone.b1):
   def get_insight(self, insight, period="30d",):
     '''
     '''
+    body = {}
     delta = {}
     delta = self.convert_time_delta(period)
     now = datetime.datetime.now()
     dt = now - datetime.timedelta(**delta)
     t1 = int(now.timestamp())
     t0 = int(dt.timestamp())
+    url = self.insights_url
 
     # Generate body
     if insight == 'dex':
-      body = { "t0": starttime, "t1": current_ts,
+      url = self.aggr_reports_url
+      body = { "t0": t0, "t1": t1,
                "_filter": "type in ['4']",
                "aggs": [ { "key": "tproperty" },
                          { "key": "user" },
                          { "key": "network" } ],
                "size": 10000 }
 
-    if insight == 'doh':
+    elif insight == 'doh':
       filter = ( "type in ['2'] and category == null and severity != 'Low' " +
                  "and severity != 'Info' and feed_name == 'Public_DOH' or " +
                  "feed_name == 'public-doh' or feed_name == 'Public_DOH_IP' " +
                  "or feed_name == 'public-doh-ip'" )
       body = { "include_count": True,
-                "t0": starttime, "t1": current_ts,
+                "t0": t0, "t1": t1,
                 "_filter": filter,
                 "aggs": [ { "key": "threat_indicator",
                            "sub_key": [ { "key": "feed_name" },
@@ -253,7 +256,7 @@ class b1reporting(bloxone.b1):
 
     elif insight == 'malware':
       body = { "include_count": True,
-               "t0": starttime, "t1": current_ts,
+               "t0": t0, "t1": t1,
                 "_filter": "type in ['2'] and tclass == 'Malware*'",
                 "aggs": [ { "key": "tproperty", 
                             "sub_key": [ { "key": "device_name" },
@@ -264,7 +267,7 @@ class b1reporting(bloxone.b1):
       filter = ( "type in ['3'] and feed_name=='CAT_Mal*' or " +
                  "feed_name=='CAT_Phi*' or feed_name=='CAT_Spam*'" )
       body = { "include_count": True,
-               "t0": starttime, "t1": current_ts,
+               "t0": t0, "t1": t1,
                "_filter": filter,
                "aggs": [ { "key": "feed_name",
                            "sub_key": [ { "key": "device_name" },
@@ -272,7 +275,7 @@ class b1reporting(bloxone.b1):
                "size": 20 }
 
     elif insight == 'category':
-      body =  { "count": False, "t0": starttime, "t1": current_ts,
+      body =  { "count": False, "t0": t0, "t1": t1,
                 "_filter": "type in ['2','3','4']",
                 "aggs": [ { "key": "tclass" } ],
                 "size": 20 } 
@@ -283,11 +286,13 @@ class b1reporting(bloxone.b1):
                         "_filter": "type in ['2']",
                         "aggs": [ { "key": "tproperty" } ],
                         "size": 5 }
+    else:
+      logging.error(f'{insight} report not currently supported')
+      body = {}
     
-    response = self.post(url, json.dump(body))
+    response = self._apipost(url, json.dumps(body), headers=self.headers)
 
     return response
-
 
 
 def main():
@@ -386,7 +391,7 @@ def main():
   plt.savefig('threat_view.png')
   #### Graph code ends
 
-  url = b1.base_url + '/api/ti-reports/v1/activity/hits?t0=' + str(starttime) +'&t1=' + str(current_ts) + '&_limit=100&_offset=0&_format=json'
+  url = b1.base_url + '/api/ti-reports/v1/activity/hits?t0=' + str(t0) +'&t1=' + str(t1) + '&_limit=100&_offset=0&_format=json'
 
   result = b1.get(url)
   datas = result.json()

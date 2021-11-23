@@ -318,38 +318,56 @@ class b1reporting(bloxone.b1):
 
     return response
 
-def get_counts(b1r, time_period):
-  '''
-  '''
-  counts = {}
-  total_dex_count = 0
-  total_mal_count = 0
-  
-  logging.info('Retrieving security hits')
-  response = b1r.get_insight('counts', time_period)
-  if response.status_code in b1r.return_codes_ok:
-    logging.info(f' - security hits retrieved')
-    logging.debug(f'{response.json()}')
-    for data in response.json()['results'][0]['sub_bucket']:
-      #print(f"{ data['key'] } - { data['count'] }")
-      if 'Data Exfiltration' in data['key']:
-        total_dex_count += int(data['count'])
-      if 'Malware' in data['key']:
-        total_mal_count += int(data['count'])
-  else:
-      logging.error(f'Error retrieving security hits.')
+  def get_counts(self, time_period):
+    '''
+    '''
+    counts = {}
+    total_dex_count = 0
+    total_mal_count = 0
+    
+    logging.info('Retrieving security hits')
+    response = self.get_insight('counts', time_period)
+    if response.status_code in self.return_codes_ok:
+      logging.info(f' - security hits retrieved')
+      logging.debug(f'{response.json()}')
+      for data in response.json()['results'][0]['sub_bucket']:
+        #print(f"{ data['key'] } - { data['count'] }")
+        if 'Data Exfiltration' in data['key']:
+          total_dex_count += int(data['count'])
+        if 'Malware' in data['key']:
+          total_mal_count += int(data['count'])
+    else:
+        logging.error(f'Error retrieving security hits.')
+        logging.info(f'HTTP Code: {response.status_code}')
+        logging.info(f'Response: {response.text}')
+        total_dex_count = -1
+        total_mal_count = -1
+    
+    # Add totals to dict
+    counts.update({"total_dex_count": total_dex_count})
+    counts.update({"total_mal_count": total_mal_count})
+    logging.debug(f'Counts: {counts}')
+
+    return counts
+ 
+  def get_total_hits(self, time_period):
+    '''
+    '''
+    response = self.security_activity(time_period)
+    if response.status_code in self.return_codes_ok:
+      logging.debug(f'response.json()')
+      total_events = response.json()['success']['size']
+      total_events = int(total_events)
+      total_events = "{:,}".format(total_events)
+    else:
+      logging.error(f'Error retrieving security activity.')
       logging.info(f'HTTP Code: {response.status_code}')
       logging.info(f'Response: {response.text}')
-      total_dex_count = -1
-      total_mal_count = -1
-  
-  # Add totals to dict
-  counts.update({"total_dex_count": total_dex_count})
-  counts.update({"total_mal_count": total_mal_count})
-  logging.debug(f'Counts: {counts}')
+      total_events = -1
+    
+    return total_events
 
-  return counts
- 
+# End of class
 
 def generate_graph(b1r, time_period):
   '''
@@ -470,20 +488,14 @@ def main():
   '''
 
   # Add total security hit counts
-  doc_data.update(get_counts(b1r, time_period))
+  doc_data.update(b1r.get_counts(time_period))
  
   # Generate graph
   generate_graph(b1r, time_period)
 
-  response = b1r.security_activity(time_period)
-  if response.status_code in b1r.return_codes_ok:
-    total_events = response.json()['success']['size']
-    total_events = int(total_events)
-    total_events = "{:,}".format(total_events)
-    doc_data.update({ "total_events": total_events })
-  else:
-    doc_data.update({ "total_events": -1 })
-    exitcode = 1
+  # Get total number of security hits
+  total_events = b1r.get_total_hits(time_period)
+  doc_data.update({ "total_events": total_events })
 
   # This is the template file I'm going to use
   doc = docxtpl.DocxTemplate("template_B1TD_report.docx")

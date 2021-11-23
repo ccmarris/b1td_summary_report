@@ -314,6 +314,7 @@ class b1reporting(bloxone.b1):
     
     logging.debug(f'URL: {url}, Body: {body}')
     response = self._apipost(url, json.dumps(body), headers=self.headers)
+    logging.debug(f'{response.json()}')
 
     return response
 
@@ -328,12 +329,12 @@ def get_counts(b1r, time_period):
   response = b1r.get_insight('counts', time_period)
   if response.status_code in b1r.return_codes_ok:
     logging.info(f' - security hits retrieved')
-    total_mal_count = 0
+    logging.debug(f'{response.json()}')
     for data in response.json()['results'][0]['sub_bucket']:
       #print(f"{ data['key'] } - { data['count'] }")
-      if data['key'] == "Data Exfiltration":
+      if 'Data Exfiltration' in data['key']:
         total_dex_count += int(data['count'])
-      if data['key'].find('Malware')!= -1:
+      if 'Malware' in data['key']:
         total_mal_count += int(data['count'])
   else:
       logging.error(f'Error retrieving security hits.')
@@ -345,6 +346,7 @@ def get_counts(b1r, time_period):
   # Add totals to dict
   counts.update({"total_dex_count": total_dex_count})
   counts.update({"total_mal_count": total_mal_count})
+  logging.debug(f'Counts: {counts}')
 
   return counts
  
@@ -356,8 +358,11 @@ def generate_graph(b1r, time_period):
   list_count =[]
 
   # *** Graph code start
+  logging.info('Retrieving data for graph')
   response = b1r.get_insight('chart', time_period)
   if response.status_code in b1r.return_codes_ok:
+    logging.info('- Graph data retrieved')
+    logging.debug(f'{response.json()}')
     # Populate Graph Data
     for data in response.json()['results'][0]['sub_bucket']:
         print(f"{ data['key'] } - { data['count'] }")
@@ -375,6 +380,7 @@ def generate_graph(b1r, time_period):
                 color=['red', 'orange', 'cyan', 'blue', 'green']) 
   # plt.show()
   plt.savefig('threat_view.png')
+  logging.info('- Graph generated')
   # *** Graph code ends
 
   return
@@ -399,13 +405,10 @@ def main():
       # Try to use inifile
       b1inifile = args.config
 
-  console_handler = logging.StreamHandler(sys.stdout)
   if args.debug:
-      logging.basicConfig(level=logging.DEBUG, handles=[console_handler])
-      # setup_logging(debug=True, usefile=usefile)
+    logging.getLogger().setLevel(logging.DEBUG) 
   else:
-      logging.basicConfig(level=logging.INFO, handles=[console_handler])
-      # setup_logging(debug=False, usefile=usefile)
+    logging.getLogger().setLevel(logging.INFO) 
 
   logging.info('Configuration read.')
   # Build document dictionary
@@ -435,7 +438,8 @@ def main():
       exitcode = 1
     doc_data.update({ section_name: report_data })
 
-
+  '''
+  Unneeded example code
   #for data in report['results']:
     #print(f"{ data['key'] } - { data['count'] }")
 
@@ -463,6 +467,7 @@ def main():
       for d in da['sub_bucket']:
         if da['key'] != 'feed_name':
           print(f"\b1{ d['key'] } - { d['count'] }")
+  '''
 
   # Add total security hit counts
   doc_data.update(get_counts(b1r, time_period))

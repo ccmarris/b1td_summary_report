@@ -21,26 +21,27 @@
  Copyright (c) 2021 Chris Marrison / Infoblox
 
 '''
-__version__ = '0.0.5'
+__version__ = '0.0.8'
 __author__ = 'Chris Marrison, Sif Baksh'
 __email__ = 'chris@infoblox.com'
 __license__ = 'BSD'
 
+import logging
 import bloxone
 import argparse
 import configparser
-import logging
 import datetime
 import os
+import sys
 import shutil
 import json
 import re
-import time
 import docxtpl
 import matplotlib.pyplot as plt
   
 # Global Variables
-log = logging.getLogger(__name__)
+# log = logging.getLogger(__name__)
+# log.addHandler(console_handler)
 
 
 def parseargs():
@@ -111,12 +112,12 @@ def open_file(filename):
         backup = filename+".bak"
         try:
             shutil.move(filename, backup)
-            log.info("Outfile exists moved to {}".format(backup))
+            logging.info("Outfile exists moved to {}".format(backup))
             try:
                 handler = open(filename, mode='w')
-                log.info("Successfully opened output file {}.".format(filename))
+                logging.info("Successfully opened output file {}.".format(filename))
             except IOError as err:
-                log.error("{}".format(err))
+                logging.error("{}".format(err))
                 handler = False
         except:
             logging.warning("Could not back up existing file {}, exiting.".format(filename))
@@ -124,9 +125,9 @@ def open_file(filename):
     else:
         try:
             handler = open(filename, mode='w')
-            log.info("Opened file {} for invalid lines.".format(filename))
+            logging.info("Opened file {} for invalid lines.".format(filename))
         except IOError as err:
-            log.error("{}".format(err))
+            logging.error("{}".format(err))
             handler = False
 
     return handler
@@ -140,15 +141,15 @@ def read_ini(ini_filename):
         ini_filename (str): name of inifile
 
     Returns:
-        config (dict): Dictionary of BloxOne configuration elements
+        config (dict): Dictionary of BloxOne configation elements
 
     '''
     # Local Variables
     section = 'B1TDC Report'
     cfg = configparser.ConfigParser()
     config = {}
-    ini_keys = [ 'b1inifile', 'customer', 'contact',
-                 'contact_phone', 'contact_email', 'no_of_days' ]
+    ini_keys = [ 'b1inifile', 'doc_title', 'customer', 'contact',
+                 'contact_phone', 'contact_email', 'time_period' ]
 
     # Attempt to read api_key from ini file
     try:
@@ -184,6 +185,7 @@ class b1reporting(bloxone.b1):
     self.ti_reports_url = self.base_url + '/api/ti-reports/' + self.cfg['api_version']
     self.aggr_reports_url  = self.ti_reports_url + '/activity/aggregations'
     self.insights_url = self.aggr_reports_url + '/insight'
+    self.sec_act_url = self.base_url + '/api/ti-reports/v1/activity/hits'
 
     return
 
@@ -198,7 +200,7 @@ class b1reporting(bloxone.b1):
     result = {}
     if isinstance(delta, str):
       no_of = int(delta[:-1])
-      unit = delta[1:].lower()
+      unit = delta[-1:].lower()
 
       if unit in ['d', 'w', 'm']:
         if unit == 'd':
@@ -210,14 +212,34 @@ class b1reporting(bloxone.b1):
           result.update({ 'weeks': no_of })
       else:
         logging.error(f'Unit must be one of d:days, w:weeks, m:months not {unit}')
-        result.update({ 'days': 0 })
+        result.update({ 'days': 1 })
     else:
       raise(TypeError)
     
     return result
 
 
-  def get_insight(self, insight, period="30d",):
+  def security_activity(self, period="1d", **params):
+    '''
+    '''
+    delta = self.convert_time_delta(period)
+    now = datetime.datetime.now()
+    dt = now - datetime.timedelta(**delta)
+    t1 = int(now.timestamp())
+    t0 = int(dt.timestamp())
+
+    # Build url
+    url = ( self.sec_act_url + '?t0=' + str(t0) +'&t1=' + str(t1) + 
+            '&_limit=100&_offset=0&_format=json' )
+    url = self._add_params(url, **params)
+    logging.debug("URL: {}".format(url))
+
+    response = self._apiget(url)
+
+    return response
+
+
+  def get_insight(self, insight, period="1w"):
     '''
     '''
     body = {}
@@ -274,7 +296,7 @@ class b1reporting(bloxone.b1):
                                         { "key": "user" } ] } ],
                "size": 20 }
 
-    elif insight == 'category':
+    elif insight == 'counts':
       body =  { "count": False, "t0": t0, "t1": t1,
                 "_filter": "type in ['2','3','4']",
                 "aggs": [ { "key": "tclass" } ],
@@ -282,7 +304,7 @@ class b1reporting(bloxone.b1):
 
     elif insight == 'chart':
       body = { "include_count": True,
-                        "t0": 1635444000, "t1": 1635530399,
+                        "t0": t0, "t1": t1,
                         "_filter": "type in ['2']",
                         "aggs": [ { "key": "tproperty" } ],
                         "size": 5 }
@@ -290,42 +312,136 @@ class b1reporting(bloxone.b1):
       logging.error(f'{insight} report not currently supported')
       body = {}
     
+    logging.debug(f'URL: {url}, Body: {body}')
     response = self._apipost(url, json.dumps(body), headers=self.headers)
 
     return response
 
+def get_counts(b1r, time_period):
+  '''
+  '''
+  counts = {}
+  total_dex_count = 0
+  total_mal_count = 0
+  
+  logging.info('Retrieving security hits')
+  response = b1r.get_insight('counts', time_period)
+  if response.status_code in b1r.return_codes_ok:
+    logging.info(f' - security hits retrieved')
+    total_mal_count = 0
+    for data in response.json()['results'][0]['sub_bucket']:
+      #print(f"{ data['key'] } - { data['count'] }")
+      if data['key'] == "Data Exfiltration":
+        total_dex_count += int(data['count'])
+      if data['key'].find('Malware')!= -1:
+        total_mal_count += int(data['count'])
+  else:
+      logging.error(f'Error retrieving security hits.')
+      logging.info(f'HTTP Code: {response.status_code}')
+      logging.info(f'Response: {response.text}')
+      total_dex_count = -1
+      total_mal_count = -1
+  
+  # Add totals to dict
+  counts.update({"total_dex_count": total_dex_count})
+  counts.update({"total_mal_count": total_mal_count})
+
+  return counts
+ 
+
+def generate_graph(b1r, time_period):
+  '''
+  '''
+  list_key =[]
+  list_count =[]
+
+  # *** Graph code start
+  response = b1r.get_insight('chart', time_period)
+  if response.status_code in b1r.return_codes_ok:
+    # Populate Graph Data
+    for data in response.json()['results'][0]['sub_bucket']:
+        print(f"{ data['key'] } - { data['count'] }")
+        list_key.append(data['key'])
+        list_count.append(int(data['count']))
+
+  # Gernerate graph
+  plt.xticks(range(len(list_count)), list_key)
+  plt.xlabel('Threat Type')
+  plt.ylabel('Total')
+  plt.title('Top 5 Threat Type')
+  plt.xticks(rotation=45)
+  plt.subplots_adjust(left=0.2, right=0.9, bottom=0.3, top=0.9)
+  plt.bar(range(len(list_count)), list_count, align='center', 
+                color=['red', 'orange', 'cyan', 'blue', 'green']) 
+  # plt.show()
+  plt.savefig('threat_view.png')
+  # *** Graph code ends
+
+  return
+
 
 def main():
   '''
+  Core Logic
   '''
+  exitcode = 0
+  usefile = False
   doc_data = {}
 
-  doc_data.update({"customer": configur.get('report','customer')})
-  doc_data.update({"doc_title": configur.get('report','doc_title')})
-  doc_data.update({"cus_name": configur.get('report','cus_name')})
-  doc_data.update({"cus_phone": configur.get('report','cus_phone')})
-  doc_data.update({"cus_email": configur.get('report','cus_email')})
-  no_of_days = configur.get('report','date_ago')
+  args = parseargs()
+  config = read_ini(args.config)
+  b1inifile = config['b1inifile']
+  time_period = config.get('time_period')
 
-  network = "BloxOne Endpoint"
+  if config['b1inifile']:
+      b1inifile = config['b1inifile']
+  else:
+      # Try to use inifile
+      b1inifile = args.config
 
-  b1 = bloxone.b1(csp_token)
-  b1td = bloxone.b1td(csp_token)
+  console_handler = logging.StreamHandler(sys.stdout)
+  if args.debug:
+      logging.basicConfig(level=logging.DEBUG, handles=[console_handler])
+      # setup_logging(debug=True, usefile=usefile)
+  else:
+      logging.basicConfig(level=logging.INFO, handles=[console_handler])
+      # setup_logging(debug=False, usefile=usefile)
 
-  # Create doc type with variable
-  def output_doc(type, cc):
-      doc_data.update({type: cc })
+  logging.info('Configuration read.')
+  # Build document dictionary
+  doc_data.update({"doc_title": config.get('doc_title')})
+  doc_data.update({"customer": config.get('customer')})
+  doc_data.update({"contact": config.get('contact')})
+  doc_data.update({"contact_phone": config.get('contact_phone')})
+  doc_data.update({"contact_email": config.get('contact_email')})
 
-  datas =(get_insights(b1, url_exfil, payload_exfil))
-  output_doc('data_exfil', datas)
-  #for data in datas['results']:
+  # Instantiate reporting class
+  b1r = b1reporting(b1inifile)
+
+  # Get core insights - note data is processed in doc template
+  insights = [ 'dex', 'doh', 'malware', 'category' ]
+  for insight in insights:
+    section_name = 'data_' + insight
+    logging.info(f'Retrieving {insight} data')
+    response = b1r.get_insight(insight, time_period)
+    if response.status_code in b1r.return_codes_ok:
+      logging.info(f' - {insight} data retrieved')
+      report_data = response.json()
+    else:
+      logging.error(f'Error for {insight} report.')
+      logging.info(f'HTTP Code: {response.status_code}')
+      logging.info(f'Response: {response.text}')
+      report_data = {}
+      exitcode = 1
+    doc_data.update({ section_name: report_data })
+
+
+  #for data in report['results']:
     #print(f"{ data['key'] } - { data['count'] }")
-
-  datas =(get_insights(url_insight, payload_doh))
 
   # To break out the users and networks later
   # print('Public DoH')
-  # for data in datas['results'][0]['sub_bucket']:
+  # for data in report['results'][0]['sub_bucket']:
   #   print(f"{ data['key'] } - { data['count'] }")
   #   for da in data['sub_bucket']:
   #     #print(f"{ da['key'] } - { da['count'] }")
@@ -333,18 +449,10 @@ def main():
   #       if da['key'] != 'feed_name':
   #         print(f"\b1{ d['key'] } - { d['count'] }")
 
-  output_doc('data_doh', datas)
-
-
-  datas =(get_insights(url_insight, payload_malware))
-  output_doc('data_mal', datas)
-
-  datas_cat =(get_insights(url_insight, payload_cat))
-  output_doc('data_cat', datas_cat)
 
   # To break out the users and networks later
-  print('Cat')
-  for data in datas_cat['results'][0]['sub_bucket']:
+  print('Categories')
+  for data in doc_data['data_category']['results'][0]['sub_bucket']:
     print(f"{ data['key'] } - { data['count'] }")
     for da in data['sub_bucket']:
       #print(f"{ da['key'] } - { da['count'] }")
@@ -356,63 +464,40 @@ def main():
         if da['key'] != 'feed_name':
           print(f"\b1{ d['key'] } - { d['count'] }")
 
+  # Add total security hit counts
+  doc_data.update(get_counts(b1r, time_period))
+ 
+  # Generate graph
+  generate_graph(b1r, time_period)
 
-  datas =(get_insights(url_insight, counts))
-  total_mal_count = 0
-  for data in datas['results'][0]['sub_bucket']:
-    #print(f"{ data['key'] } - { data['count'] }")
-    if data['key'] == "Data Exfiltration":
-      total_dex_count= data['count']
-      doc_data.update({"total_dex_count": total_dex_count})
-    if data['key'].find('Malware')!= -1:
-      total_mal_count += int(data['count'])
-      doc_data.update({"total_mal_count": total_mal_count})
+  response = b1r.security_activity(time_period)
+  if response.status_code in b1r.return_codes_ok:
+    total_events = response.json()['success']['size']
+    total_events = int(total_events)
+    total_events = "{:,}".format(total_events)
+    doc_data.update({ "total_events": total_events })
+  else:
+    doc_data.update({ "total_events": -1 })
+    exitcode = 1
 
-  list_key =[]
-  list_count =[]
-
-  #### Graph code start
-  chart =(get_insights(url_insight, payload_chart))
-
-  for data in chart['results'][0]['sub_bucket']:
-      print(f"{ data['key'] } - { data['count'] }")
-      list_key.append(data['key'])
-      list_count.append(int(data['count']))
-
-
-  plt.xticks(range(len(list_count)), list_key)
-  plt.xlabel('Threat Type')
-  plt.ylabel('Total')
-  plt.title('Top 5 Threat Type')
-  plt.xticks(rotation=45)
-  plt.subplots_adjust(left=0.2, right=0.9, bottom=0.3, top=0.9)
-  plt.bar(range(len(list_count)), list_count, align='center', color=['red', 'orange', 'cyan', 'blue', 'green']) 
-  plt.show()
-  plt.savefig('threat_view.png')
-  #### Graph code ends
-
-  url = b1.base_url + '/api/ti-reports/v1/activity/hits?t0=' + str(t0) +'&t1=' + str(t1) + '&_limit=100&_offset=0&_format=json'
-
-  result = b1.get(url)
-  datas = result.json()
-  total_events = datas['success']['size']
-  total_events = int(total_events)
-  total_events = "{:,}".format(total_events)
-  doc_data.update({"total_events": total_events})
   # This is the template file I'm going to use
-  doc = DocxTemplate("template_B1TD_report.docx")
+  doc = docxtpl.DocxTemplate("template_B1TD_report.docx")
 
   # Adding the Chart to the Word Doc
-  myimage = InlineImage(doc, image_descriptor='threat_view.png')
+  myimage = docxtpl.InlineImage(doc, image_descriptor='threat_view.png')
   doc_data.update({"myimage": myimage})
 
   # Populate Template
   doc.render(doc_data)
   # The output file is 
   # doc.save("report5.docx")
-  doc.save("B1TD_Report_" + (date.today()).strftime("%Y-%m-%d") + "_" + re.sub('[^a-zA-Z0-9]', '_', configur.get('report','customer')) + ".docx")
+  filename = ("B1TD_Report_" + (datetime.date.today()).strftime("%Y-%m-%d") + 
+              "_" + re.sub('[^a-zA-Z0-9]', '_', config.get('customer')) + 
+              ".docx")
+  doc.save(filename)
 
   return exitcode
+
 
 ### Main ###
 if __name__ == '__main__':

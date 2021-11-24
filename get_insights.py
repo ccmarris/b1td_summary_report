@@ -21,7 +21,7 @@
  Copyright (c) 2021 Chris Marrison / Infoblox
 
 '''
-__version__ = '0.0.8'
+__version__ = '0.0.9'
 __author__ = 'Chris Marrison, Sif Baksh'
 __email__ = 'chris@infoblox.com'
 __license__ = 'BSD'
@@ -32,7 +32,6 @@ import argparse
 import configparser
 import datetime
 import os
-import sys
 import shutil
 import json
 import re
@@ -55,10 +54,13 @@ def parseargs():
         Returns parsed arguments
     '''
     parse = argparse.ArgumentParser(description='SE Automation Demo - Create Demo')
-    parse.add_argument('-o', '--output', action='store_true', 
-                        help="Ouput log to file <customer>.log") 
     parse.add_argument('-c', '--config', type=str, default='csp.ini',
                         help="Overide Config file")
+    parse.add_argument('-t', '--template', type=str, 
+                       default='template_B1TD_report.docx', 
+                       help="Overide template file")
+    parse.add_argument('-o', '--output', action='store_true', 
+                        help="Ouput log to file <customer>.log") 
     parse.add_argument('-d', '--debug', action='store_true', 
                         help="Enable debug messages")
 
@@ -302,7 +304,7 @@ class b1reporting(bloxone.b1):
                 "aggs": [ { "key": "tclass" } ],
                 "size": 20 } 
 
-    elif insight == 'chart':
+    elif insight == 'graph_data':
       body = { "include_count": True,
                         "t0": t0, "t1": t1,
                         "_filter": "type in ['2']",
@@ -377,13 +379,13 @@ def generate_graph(b1r, time_period):
 
   # *** Graph code start
   logging.info('Retrieving data for graph')
-  response = b1r.get_insight('chart', time_period)
+  response = b1r.get_insight('graph_data', time_period)
   if response.status_code in b1r.return_codes_ok:
     logging.info('- Graph data retrieved')
     logging.debug(f'{response.json()}')
     # Populate Graph Data
     for data in response.json()['results'][0]['sub_bucket']:
-        print(f"{ data['key'] } - { data['count'] }")
+        logging.debug(f"{ data['key'] } - { data['count'] }")
         list_key.append(data['key'])
         list_count.append(int(data['count']))
 
@@ -429,12 +431,14 @@ def main():
     logging.getLogger().setLevel(logging.INFO) 
 
   logging.info('Configuration read.')
+  iso_date = (datetime.date.today()).strftime("%Y-%m-%d")
   # Build document dictionary
   doc_data.update({"doc_title": config.get('doc_title')})
   doc_data.update({"customer": config.get('customer')})
   doc_data.update({"contact": config.get('contact')})
   doc_data.update({"contact_phone": config.get('contact_phone')})
   doc_data.update({"contact_email": config.get('contact_email')})
+  doc_data.update({"iso_date": iso_date})
 
   # Instantiate reporting class
   b1r = b1reporting(b1inifile)
@@ -497,21 +501,26 @@ def main():
   total_events = b1r.get_total_hits(time_period)
   doc_data.update({ "total_events": total_events })
 
-  # This is the template file I'm going to use
-  doc = docxtpl.DocxTemplate("template_B1TD_report.docx")
+  # Define template file to use
+  doc = docxtpl.DocxTemplate(args.template)
 
-  # Adding the Chart to the Word Doc
+  # Adding the graph_data to the Word Doc
   myimage = docxtpl.InlineImage(doc, image_descriptor='threat_view.png')
   doc_data.update({"myimage": myimage})
 
   # Populate Template
+  logging.info('Generating document')
   doc.render(doc_data)
   # The output file is 
   # doc.save("report5.docx")
-  filename = ("B1TD_Report_" + (datetime.date.today()).strftime("%Y-%m-%d") + 
-              "_" + re.sub('[^a-zA-Z0-9]', '_', config.get('customer')) + 
-              ".docx")
-  doc.save(filename)
+  filename = ("B1TD_Report_" + iso_date + "_" + 
+              re.sub('[^a-zA-Z0-9]', '_', config.get('customer')) + ".docx")
+  try:
+    doc.save(filename)
+    logging.info(f'Document {filename} created')
+  except:
+    logging.error(f'Failed to create document {filename}')
+    exitcode = 1
 
   return exitcode
 

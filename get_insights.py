@@ -54,7 +54,7 @@ def parseargs():
         Returns parsed arguments
     '''
     parse = argparse.ArgumentParser(description='SE Automation Demo - Create Demo')
-    parse.add_argument('-c', '--config', type=str, default='csp.ini',
+    parse.add_argument('-c', '--config', type=str, default='report.ini',
                         help="Overide Config file")
     parse.add_argument('-t', '--template', type=str, 
                        default='template_B1TD_report.docx', 
@@ -151,7 +151,8 @@ def read_ini(ini_filename):
     cfg = configparser.ConfigParser()
     config = {}
     ini_keys = [ 'b1inifile', 'doc_title', 'customer', 'contact',
-                 'contact_phone', 'contact_email', 'time_period' ]
+                 'contact_phone', 'contact_email', 'time_period',
+                 'prepared_by', 'prepared_email' ]
 
     # Attempt to read api_key from ini file
     try:
@@ -392,7 +393,8 @@ def generate_graph(b1r, time_period):
   # Gernerate graph
   plt.xticks(range(len(list_count)), list_key)
   plt.xlabel('Threat Type')
-  plt.ylabel('Total')
+  plt.ylabel('Total Hits')
+  plt.yscale('log')
   plt.title('Top 5 Threat Type')
   plt.xticks(rotation=45)
   plt.subplots_adjust(left=0.2, right=0.9, bottom=0.3, top=0.9)
@@ -438,6 +440,8 @@ def main():
   doc_data.update({"contact": config.get('contact')})
   doc_data.update({"contact_phone": config.get('contact_phone')})
   doc_data.update({"contact_email": config.get('contact_email')})
+  doc_data.update({"prepared_by": config.get('prepared_by')})
+  doc_data.update({"prepared_email": config.get('prepared_email')})
   doc_data.update({"iso_date": iso_date})
 
   # Instantiate reporting class

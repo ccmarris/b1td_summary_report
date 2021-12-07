@@ -21,13 +21,13 @@
  Copyright (c) 2021 Chris Marrison / Infoblox
 
 '''
-__version__ = '0.0.9'
-__author__ = 'Chris Marrison, Sif Baksh'
+__version__ = '0.0.10'
+__author__ = 'Chris Marrison'
 __email__ = 'chris@infoblox.com'
 __license__ = 'BSD'
 
 import logging
-import bloxone
+import b1reporting
 import argparse
 import configparser
 import datetime
@@ -166,7 +166,7 @@ def read_ini(ini_filename):
         for key in ini_keys:
             # Check for key in BloxOne section
             if key in cfg[section]:
-                config[key] = cfg[section][key].strip("'\"")
+                config[key] = cfg[section][key].strip("'\"<>")
                 logging.debug(f'Key {key} found in {ini_filename}: {config[key]}')
             else:
                 logging.warning(f'Key {key} not found in {section} section.')
@@ -177,210 +177,16 @@ def read_ini(ini_filename):
     return config
 
 
-class b1reporting(bloxone.b1):
-  '''
-  '''
-  def __init__(self, cfg_file='config.ini'):
-    '''
-    Call base __init__ and extend
-    '''
-    super().__init__(cfg_file)
-    self.ti_reports_url = self.base_url + '/api/ti-reports/' + self.cfg['api_version']
-    self.aggr_reports_url  = self.ti_reports_url + '/activity/aggregations'
-    self.insights_url = self.aggr_reports_url + '/insight'
-    self.sec_act_url = self.base_url + '/api/ti-reports/v1/activity/hits'
-
-    return
-
-
-  def convert_time_delta(self, delta):
-    '''
-    Convert digit/unit e.g. 1d to dict
-
-    Parameters:
-      delta (str): 
-    '''
-    result = {}
-    if isinstance(delta, str):
-      no_of = int(delta[:-1])
-      unit = delta[-1:].lower()
-
-      if unit in ['d', 'w', 'm']:
-        if unit == 'd':
-          result.update({ 'days': no_of })
-        elif unit == 'w':
-          result.update({ 'weeks': no_of })
-        elif unit == 'm':
-          no_of = 4 * no_of
-          result.update({ 'weeks': no_of })
-      else:
-        logging.error(f'Unit must be one of d:days, w:weeks, m:months not {unit}')
-        result.update({ 'days': 1 })
-    else:
-      raise(TypeError)
-    
-    return result
-
-
-  def security_activity(self, period="1d", **params):
-    '''
-    '''
-    delta = self.convert_time_delta(period)
-    now = datetime.datetime.now()
-    dt = now - datetime.timedelta(**delta)
-    t1 = int(now.timestamp())
-    t0 = int(dt.timestamp())
-
-    # Build url
-    url = ( self.sec_act_url + '?t0=' + str(t0) +'&t1=' + str(t1) + 
-            '&_limit=100&_offset=0&_format=json' )
-    url = self._add_params(url, **params)
-    logging.debug("URL: {}".format(url))
-
-    response = self._apiget(url)
-
-    return response
-
-
-  def get_insight(self, insight, period="1w"):
-    '''
-    '''
-    body = {}
-    delta = {}
-    delta = self.convert_time_delta(period)
-    now = datetime.datetime.now()
-    dt = now - datetime.timedelta(**delta)
-    t1 = int(now.timestamp())
-    t0 = int(dt.timestamp())
-    url = self.insights_url
-
-    # Generate body
-    if insight == 'dex':
-      url = self.aggr_reports_url
-      body = { "t0": t0, "t1": t1,
-               "_filter": "type in ['4']",
-               "aggs": [ { "key": "tproperty" },
-                         { "key": "user" },
-                         { "key": "network" } ],
-               "size": 10000 }
-
-    elif insight == 'doh':
-      filter = ( "type in ['2'] and category == null and severity != 'Low' " +
-                 "and severity != 'Info' and feed_name == 'Public_DOH' or " +
-                 "feed_name == 'public-doh' or feed_name == 'Public_DOH_IP' " +
-                 "or feed_name == 'public-doh-ip'" )
-      body = { "include_count": True,
-                "t0": t0, "t1": t1,
-                "_filter": filter,
-                "aggs": [ { "key": "threat_indicator",
-                           "sub_key": [ { "key": "feed_name" },
-                                        { "key": "user" },
-                                        { "key": "device_name" } ] 
-                         } ],
-               "size": 10 } 
-
-    elif insight == 'malware':
-      body = { "include_count": True,
-               "t0": t0, "t1": t1,
-                "_filter": "type in ['2'] and tclass == 'Malware*'",
-                "aggs": [ { "key": "tproperty", 
-                            "sub_key": [ { "key": "device_name" },
-                                         { "key": "user" } ] } ],
-                "size": 10 }
-
-    elif insight == 'category':
-      filter = ( "type in ['3'] and feed_name=='CAT_Mal*' or " +
-                 "feed_name=='CAT_Phi*' or feed_name=='CAT_Spam*'" )
-      body = { "include_count": True,
-               "t0": t0, "t1": t1,
-               "_filter": filter,
-               "aggs": [ { "key": "feed_name",
-                           "sub_key": [ { "key": "device_name" },
-                                        { "key": "user" } ] } ],
-               "size": 20 }
-
-    elif insight == 'counts':
-      body =  { "count": False, "t0": t0, "t1": t1,
-                "_filter": "type in ['2','3','4']",
-                "aggs": [ { "key": "tclass" } ],
-                "size": 20 } 
-
-    elif insight == 'graph_data':
-      body = { "include_count": True,
-                        "t0": t0, "t1": t1,
-                        "_filter": "type in ['2']",
-                        "aggs": [ { "key": "tproperty" } ],
-                        "size": 5 }
-    else:
-      logging.error(f'{insight} report not currently supported')
-      body = {}
-    
-    logging.debug(f'URL: {url}, Body: {body}')
-    response = self._apipost(url, json.dumps(body), headers=self.headers)
-    logging.debug(f'{response.json()}')
-
-    return response
-
-  def get_counts(self, time_period):
-    '''
-    '''
-    counts = {}
-    total_dex_count = 0
-    total_mal_count = 0
-    
-    logging.info('Retrieving security hits')
-    response = self.get_insight('counts', time_period)
-    if response.status_code in self.return_codes_ok:
-      logging.info(f' - security hits retrieved')
-      logging.debug(f'{response.json()}')
-      for data in response.json()['results'][0]['sub_bucket']:
-        #print(f"{ data['key'] } - { data['count'] }")
-        if 'Data Exfiltration' in data['key']:
-          total_dex_count += int(data['count'])
-        if 'Malware' in data['key']:
-          total_mal_count += int(data['count'])
-    else:
-        logging.error(f'Error retrieving security hits.')
-        logging.info(f'HTTP Code: {response.status_code}')
-        logging.info(f'Response: {response.text}')
-        total_dex_count = -1
-        total_mal_count = -1
-    
-    # Add totals to dict
-    counts.update({"total_dex_count": total_dex_count})
-    counts.update({"total_mal_count": total_mal_count})
-    logging.debug(f'Counts: {counts}')
-
-    return counts
- 
-  def get_total_hits(self, time_period):
-    '''
-    '''
-    response = self.security_activity(time_period)
-    if response.status_code in self.return_codes_ok:
-      logging.debug(f'response.json()')
-      total_events = response.json()['success']['size']
-      total_events = int(total_events)
-      total_events = "{:,}".format(total_events)
-    else:
-      logging.error(f'Error retrieving security activity.')
-      logging.info(f'HTTP Code: {response.status_code}')
-      logging.info(f'Response: {response.text}')
-      total_events = -1
-    
-    return total_events
-
-# End of class
-
-def generate_graph(b1r, time_period):
+def generate_graph(b1r, time_period, show=False, 
+                   save=True, filename='threat_view.png'):
   '''
   '''
   list_key =[]
   list_count =[]
 
   # *** Graph code start
-  logging.info('Retrieving data for graph')
-  response = b1r.get_insight('graph_data', time_period)
+  logging.info('Retrieving data for graph') 
+  response = b1r.get_insight('tproperty', time_period) 
   if response.status_code in b1r.return_codes_ok:
     logging.info('- Graph data retrieved')
     logging.debug(f'{response.json()}')
@@ -391,18 +197,25 @@ def generate_graph(b1r, time_period):
         list_count.append(int(data['count']))
 
   # Gernerate graph
-  plt.xticks(range(len(list_count)), list_key)
-  plt.xlabel('Threat Type')
-  plt.ylabel('Total Hits')
-  plt.yscale('log')
-  plt.title('Top 5 Threat Type')
-  plt.xticks(rotation=45)
-  plt.subplots_adjust(left=0.2, right=0.9, bottom=0.3, top=0.9)
-  plt.bar(range(len(list_count)), list_count, align='center', 
+  ax = plt.subplot()
+  hbar = ax.barh(range(len(list_count)), list_count, align='center', 
                 color=['red', 'orange', 'cyan', 'blue', 'green']) 
-  # plt.show()
-  plt.savefig('threat_view.png')
+  ax.set_title('Top 5 Feed Hits')
+  ax.set_xlabel('Total Hits')
+  ax.set_ylabel('Feed Name')
+  ax.set_xscale('log')
+  # ax.set_xticks(range(len(list_count)))
+  ax.set_yticks(range(len(list_count)), list_key)
+  ax.bar_label(hbar)
+  # plt.subplots_adjust(left=0.2, right=0.9, bottom=0.3, top=0.9)
+  plt.tight_layout()
   logging.info('- Graph generated')
+  if show:
+    plt.show()
+    logging.info('- Graph displayed')
+  if save:
+    plt.savefig(filename)
+    logging.info(f'- Graph saved as {filename}')
   # *** Graph code ends
 
   return
@@ -413,7 +226,7 @@ def main():
   Core Logic
   '''
   exitcode = 0
-  usefile = False
+  # usefile = False
   doc_data = {}
 
   args = parseargs()
@@ -445,7 +258,7 @@ def main():
   doc_data.update({"iso_date": iso_date})
 
   # Instantiate reporting class
-  b1r = b1reporting(b1inifile)
+  b1r = b1reporting.b1reporting(b1inifile)
 
   # Get core insights - note data is processed in doc template
   insights = [ 'dex', 'doh', 'malware', 'category' ]

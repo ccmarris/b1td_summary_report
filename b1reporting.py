@@ -123,7 +123,7 @@ class b1reporting(bloxone.b1):
     t1 = int(now.timestamp())
     t0 = int(dt.timestamp())
 
-    url = self.dns_events_url + f'?t0={t0}&t1={t1}''
+    url = self.dns_events_url + f'?t0={t0}&t1={t1}'
     
     if source:
       url = url + f'&source={source}'

@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3
+#!/usr/bin/env python3
 #vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
 '''
 
@@ -21,10 +21,10 @@
  Copyright (c) 2021 Chris Marrison / Infoblox
 
 '''
-__version__ = '0.0.10'
+__version__ = '0.0.11'
 __author__ = 'Chris Marrison'
 __email__ = 'chris@infoblox.com'
-__license__ = 'BSD'
+__license__ = 'BSD2'
 
 import logging
 import b1reporting

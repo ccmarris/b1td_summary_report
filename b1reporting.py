@@ -44,12 +44,17 @@ import bloxone
 import datetime
 import json
 
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 __author__ = 'Chris Marrison'
 __author_email__ = 'chris@infoblox.com'
 
 class b1reporting(bloxone.b1):
   '''
+  Experimental Reporting Class
+
+  ..Note::
+    This class uses undocumented API calls that may change without notice
+  
   '''
   def __init__(self, cfg_file='config.ini'):
     '''
@@ -70,7 +75,10 @@ class b1reporting(bloxone.b1):
     Convert digit/unit e.g. 1d to dict
 
     Parameters:
-      delta (str): 
+      delta (str): period 3d, 2w, 1m, i.e. \d*[dwm]
+    
+    Returns:
+      dict in form to pass to datetime
     '''
     result = {}
     if isinstance(delta, str):
@@ -96,6 +104,13 @@ class b1reporting(bloxone.b1):
 
   def security_activity(self, period="1d", **params):
     '''
+    Get security activity log for specified period
+
+    Parameters:
+      period(str): Period in form of 3d, 2w, 1d
+    
+    Returns:
+        requests response object
     '''
     delta = self.convert_time_delta(period)
     now = datetime.datetime.now()
@@ -104,8 +119,7 @@ class b1reporting(bloxone.b1):
     t0 = int(dt.timestamp())
 
     # Build url
-    url = ( self.sec_act_url + '?t0=' + str(t0) +'&t1=' + str(t1) + 
-            '&_limit=100&_offset=0&_format=json' )
+    url =  self.sec_act_url + '?t0=' + str(t0) +'&t1=' + str(t1)
     url = self._add_params(url, **params)
     logging.debug("URL: {}".format(url))
 
@@ -116,7 +130,15 @@ class b1reporting(bloxone.b1):
 
   def dns_events(self, period='1d', source='', **params):
     '''
+    Get DNS events log for specified period
+
+    Parameters:
+      period(str): Period in form of 3d, 2w, 1d
+    
+    Returns:
+        requests response object
     '''
+    sources = [ 'rpz', 'category', 'analytics' ]
     delta = self.convert_time_delta(period)
     now = datetime.datetime.now()
     dt = now - datetime.timedelta(**delta)
@@ -127,6 +149,8 @@ class b1reporting(bloxone.b1):
     
     if source:
       url = url + f'&source={source}'
+      if source not in sources:
+        logging.warning(f'Unexpected source: {source} check response.')
     # Add additional parameters
     url = self._add_params(url, first_param=False, **params)
     logging.debug(f'dns_events URL: {url}')
@@ -138,6 +162,16 @@ class b1reporting(bloxone.b1):
 
   def get_insight(self, insight, period="1w"):
     '''
+    Get "insight" summaries
+
+    Parameters:
+      insight(str): One of ['activity', 'total_queries', 'doh', 'malware',
+                            'category', 'tclass', 'tproperty', 'dex']
+      period(str): Period in form of 3d, 2w, 1d
+    
+    Returns:
+        requests response object
+
     '''
     body = {}
     delta = {}
@@ -149,12 +183,11 @@ class b1reporting(bloxone.b1):
     url = self.insights_url
 
     # Generate body
-    if insight == 'total':
-        body = { "include_count": True, "t0": t0, "t1": t1,
-                 "_filter": "type in ['1']", 
-                 "aggs": [ { "key": "type",
-                            "sub_key": [ { "key": "policy_action" } ] } ],
-                 "size": 1 }
+    if insight == 'activity':
+      body = { "include_count": True, "t0": t0, "t1": t1,
+               "_filter": "type in ['2', '3'] and severity != 'Info'",
+               "aggs": [ { "key": "severity" } ],
+               "size": 3 }
 
     elif insight == 'total_queries':
       body = { "include_count": True, 
@@ -221,6 +254,18 @@ class b1reporting(bloxone.b1):
                          { "key": "network" } ],
                "size": 10000 }
 
+    elif insight == 'indicator_client_count':
+      filter = ( "type in ['2'] and category == null and severity != 'Low' " +
+                 "and severity != 'Info'" )
+      body = { "include_count": True,
+                "t0": t0, "t1": t1,
+                "_filter": filter,
+                "aggs": [ { "key": "threat_indicator",
+                           "sub_key": [ { "key": "feed_name" },
+                                        { "key": "user" },
+                                        { "key": "device_name" } ] 
+                         } ],
+               "size": 10 } 
     else:
       logging.error(f'{insight} report not currently supported')
       body = {}

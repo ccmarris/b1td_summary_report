@@ -7,7 +7,7 @@
 
  Module to provide class hierachy to simplify access to the BloxOne APIs
 
- Date Last Updated: 20211203
+ Date Last Updated: 20220331
 
  Todo:
 
@@ -44,7 +44,7 @@ import bloxone
 import datetime
 import json
 
-__version__ = '0.0.3'
+__version__ = '0.0.4'
 __author__ = 'Chris Marrison'
 __author_email__ = 'chris@infoblox.com'
 
@@ -288,12 +288,15 @@ class b1reporting(bloxone.b1):
     if response.status_code in self.return_codes_ok:
       logging.info(f' - security hits retrieved')
       logging.debug(f'{response.json()}')
-      for data in response.json()['results'][0]['sub_bucket']:
-        #print(f"{ data['key'] } - { data['count'] }")
-        if 'Data Exfiltration' in data['key']:
-          total_dex_count += int(data['count'])
-        if 'Malware' in data['key']:
-          total_mal_count += int(data['count'])
+      results = response.json().get('results')
+      if isinstance(results, list):
+        for data in results[0].get('sub_bucket'):
+          if 'key' in data.keys():
+            #print(f"{ data['key'] } - { data['count'] }")
+            if 'Data Exfiltration' in data.get('key'):
+              total_dex_count += int(data['count'])
+            if 'Malware' in data.get('key'):
+              total_mal_count += int(data['count'])
     else:
         logging.error(f'Error retrieving security hits.')
         logging.info(f'HTTP Code: {response.status_code}')

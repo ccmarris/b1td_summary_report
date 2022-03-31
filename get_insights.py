@@ -14,14 +14,14 @@
 
  Author: Chris Marrison, based on prototype script by Sif Baksh
 
- Date Last Updated: 20211119
+ Date Last Updated: 20220331
 
  Todo:
 
  Copyright (c) 2021 Chris Marrison / Infoblox
 
 '''
-__version__ = '0.0.11'
+__version__ = '0.0.12'
 __author__ = 'Chris Marrison'
 __email__ = 'chris@infoblox.com'
 __license__ = 'BSD2'

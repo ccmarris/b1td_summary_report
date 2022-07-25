@@ -5,13 +5,13 @@
 
  Description:
 
- Module to provide class hierachy to simplify access to the BloxOne APIs
+ Experimental b1reporting class
 
  Date Last Updated: 20220331
 
  Todo:
 
- Copyright (c) 2021 Chris Marrison / Infoblox
+ Copyright (c) 2022 Chris Marrison / Infoblox
 
  Redistribution and use in source and binary forms,
  with or without modification, are permitted provided
